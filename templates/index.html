@@ -1,14 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>CBSE TXT to Excel Converter</title>
+    <title>CBSE Results to Excel</title>
 </head>
 <body>
-    <h2>Upload CBSE Results TXT File</h2>
-    <form action="/convert" method="POST" enctype="multipart/form-data">
-        <input type="file" name="txtfile" accept=".txt" required>
-        <button type="submit">Convert to Excel</button>
+    <h1>Convert CBSE Results TXT to Excel</h1>
+    <form method="POST" enctype="multipart/form-data">
+        <input type="file" name="file" required>
+        <input type="submit" value="Process and Download Excel">
     </form>
 </body>
 </html>
