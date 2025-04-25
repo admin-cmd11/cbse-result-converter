@@ -1,15 +1,25 @@
 import pandas as pd
 import re
 import os
-import tempfile
 from openpyxl.styles import Font, Alignment
-from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
-def convert_txt_to_excel(txt_file_path):
-    with open(txt_file_path, 'r', encoding='utf-8') as file:
-        content = file.read()
+def deduplicate_columns(columns):
+    seen = {}
+    new_columns = []
+    for col in columns:
+        if col in seen:
+            seen[col] += 1
+            new_columns.append(f"{col}.{seen[col]}")  # Append a suffix to duplicate column names
+        else:
+            seen[col] = 0
+            new_columns.append(col)
+    return new_columns
 
-    # Extract school info
+def convert_text_to_excel(file_path, output_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
     header_match = re.search(r'DATE:- (.*?)C\.B\.S\.E\. - (.*?)REGION: (.*?)PAGE:-', content)
     school_match = re.search(r'SCHOOL : - (\d+)\s+([^\n]+)', content)
 
@@ -21,17 +31,17 @@ def convert_txt_to_excel(txt_file_path):
         school_code, school_name = school_match.groups()
         school_info += f"School Code: {school_code} | School Name: {school_name.strip()}"
 
-    # Extract student records
     students = []
     records = re.finditer(
-        r'(\d{8})\s+([MF])\s+([^\n]+?)\s+((?:\d{3}\s+)+)\s+(PASS|FAIL)\s+.*?\n\s*((?:\d{3}\s+[A-Z]\d\s+)+)',
+        r'(\d{8})\s+([MF])\s+([^\n]+?)\s+((?:\d{3}\s+)+)\s+(PASS|FAIL)\s*'
+        r'(.*?)(?:\n|$)',
         content,
         re.DOTALL
     )
 
     for record in records:
         roll_no, gender, name, subject_codes, result, grades_str = record.groups()
-        name = ' '.join(name.split())
+        name = ' '.join(name.split())  # Clean up name
         subject_codes = subject_codes.strip().split()
         grade_pairs = re.findall(r'(\d{3})\s+([A-Z]\d)', grades_str)
 
@@ -55,42 +65,51 @@ def convert_txt_to_excel(txt_file_path):
 
     df = pd.DataFrame(students)
 
-    # Reorder columns
     base_columns = ['Roll No', 'Name', 'Gender']
     subject_columns = []
+
     for col in df.columns:
         if col.startswith('Sub') and 'Marks' in col:
             sub_code = col.split()[1]
-            subject_columns.extend([f'Sub {sub_code} Marks', f'Sub {sub_code} Grade'])
+            if f'Sub {sub_code} Marks' not in subject_columns and f'Sub {sub_code} Grade' not in subject_columns:
+                subject_columns.extend([f'Sub {sub_code} Marks', f'Sub {sub_code} Grade'])
+
     columns_order = base_columns + subject_columns + ['Result']
     df = df[columns_order]
 
-    # Save to Excel
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as temp_output:
-        writer = pd.ExcelWriter(temp_output.name, engine='openpyxl')
-        df.to_excel(writer, index=False, startrow=4, header=False)
+    df = df.drop_duplicates(keep='first')
+    df.columns = deduplicate_columns(df.columns)
 
-        workbook = writer.book
-        worksheet = writer.sheets['Sheet1']
+    writer = pd.ExcelWriter(output_path, engine='openpyxl')
+    df.to_excel(writer, index=False, startrow=4, header=True)
 
-        worksheet.merge_cells('A1:Z1')
-        worksheet.merge_cells('A2:Z2')
+    workbook = writer.book
+    worksheet = writer.sheets['Sheet1']
 
-        header_cell = worksheet['A1']
-        header_cell.value = school_info.split('\n')[0]
-        header_cell.font = Font(bold=True)
-        header_cell.alignment = Alignment(horizontal='center')
+    worksheet.merge_cells('A1:N1')
+    worksheet.merge_cells('A2:N2')
 
-        school_cell = worksheet['A2']
-        school_cell.value = school_info.split('\n')[1] if '\n' in school_info else ""
-        school_cell.font = Font(bold=True)
-        school_cell.alignment = Alignment(horizontal='center')
+    header_cell = worksheet['A1']
+    header_cell.value = school_info.split('\n')[0]
+    header_cell.font = Font(bold=True)
+    header_cell.alignment = Alignment(horizontal='center')
 
-        for col_num, value in enumerate(df.columns.values, 1):
-            cell = worksheet.cell(row=4, column=col_num, value=value)
-            cell.font = Font(bold=True)
+    school_cell = worksheet['A2']
+    school_cell.value = school_info.split('\n')[1] if '\n' in school_info else ""
+    school_cell.font = Font(bold=True)
+    school_cell.alignment = Alignment(horizontal='center')
 
-        worksheet.freeze_panes = 'A5'
-        writer.close()
+    for col_num in range(1, len(df.columns) + 1):
+        cell = worksheet.cell(row=5, column=col_num)
+        cell.font = Font(bold=True)
 
-        return temp_output.name
+    worksheet.freeze_panes = 'A6'
+    for i, column_cells in enumerate(df.columns, 1):
+        max_length = max(
+            [len(str(col))] + [len(str(cell)) for cell in df[col].astype(str)]
+        )
+        col_letter = get_column_letter(i)
+        adjusted_width = 12 if col_letter == 'A' else max_length + 2
+        worksheet.column_dimensions[col_letter].width = adjusted_width
+
+    writer.close()
